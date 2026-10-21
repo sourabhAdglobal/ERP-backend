@@ -1,0 +1,215 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships OrganizationMembership[]
+  departments Department[]
+  roles       Role[]
+  invitations Invitation[]
+  auditLogs   AuditLog[]
+
+  @@map("organizations")
+}
+
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  passwordHash    String?    @map("password_hash")
+  status          UserStatus @default(INVITED)
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  memberships        OrganizationMembership[]
+  authSessions       AuthSession[]
+  invitationsCreated Invitation[] @relation("InvitationCreator")
+  auditLogs          AuditLog[]   @relation("AuditActor")
+
+  @@index([status])
+  @@map("users")
+}
+
+model OrganizationMembership {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  userId         String           @map("user_id")
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  departments MembershipDepartment[]
+  roles       MembershipRole[]
+
+  @@unique([organizationId, userId])
+  @@unique([id, organizationId])
+  @@index([userId, status])
+  @@map("organization_memberships")
+}
+
+model Department {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  code           String
+  description    String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  memberLinks MembershipDepartment[]
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, code])
+  @@unique([id, organizationId])
+  @@index([organizationId, isActive])
+  @@map("departments")
+}
+
+model MembershipDepartment {
+  membershipId  String @map("membership_id")
+  departmentId  String @map("department_id")
+  organizationId String @map("organization_id")
+
+  membership OrganizationMembership @relation(fields: [membershipId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  department Department @relation(fields: [departmentId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@id([membershipId, departmentId])
+  @@index([organizationId, departmentId])
+  @@map("membership_departments")
+}
+
+model Role {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  key            String
+  description    String?
+  isSystem       Boolean  @default(false) @map("is_system")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  memberships  MembershipRole[]
+  permissions  RolePermission[]
+
+  @@unique([organizationId, key])
+  @@unique([id, organizationId])
+  @@index([organizationId, isSystem])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model MembershipRole {
+  membershipId  String @map("membership_id")
+  roleId        String @map("role_id")
+  organizationId String @map("organization_id")
+
+  membership OrganizationMembership @relation(fields: [membershipId, organizationId], references: [id, organizationId], onDelete: Cascade)
+  role Role @relation(fields: [roleId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@id([membershipId, roleId])
+  @@index([organizationId, roleId])
+  @@map("membership_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Invitation {
+  id               String    @id @default(uuid())
+  organizationId   String    @map("organization_id")
+  email            String
+  tokenHash        String    @unique @map("token_hash")
+  invitedByUserId  String?   @map("invited_by_user_id")
+  expiresAt        DateTime  @map("expires_at")
+  acceptedAt       DateTime? @map("accepted_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  invitedByUser User? @relation("InvitationCreator", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, email])
+  @@index([organizationId, expiresAt])
+  @@map("invitations")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("auth_sessions")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  actorUserId    String?  @map("actor_user_id")
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id")
+  metadata       Json?
+  ipAddress      String?  @map("ip_address")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actorUser User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
