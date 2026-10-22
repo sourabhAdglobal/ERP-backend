@@ -2,7 +2,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-
+import * as argon2 from "argon2";
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
@@ -119,7 +119,146 @@ const roleDefinitions = [
   },
 ];
 
+const testOrganizations = [
+  { name: "Acme Corporation", slug: "acme-corporation" },
+  { name: "Globex Corporation", slug: "globex-corporation" },
+  { name: "Initech Corporation", slug: "initech-corporation" },
+  { name: "Umbrella Corporation", slug: "umbrella-corporation" },
+];
+
+const departmentDefinitions = [
+  { name: "Engineering", code: "ENG" },
+  { name: "Human Resources", code: "HR" },
+  { name: "Finance", code: "FIN" },
+  { name: "Operations", code: "OPS" },
+];
+
+const testPassword = "Test1234!";
+
 async function main() {
+
+  // 1. Create organizations (reuse existing organizations by slug).
+for (const definition of testOrganizations) {
+  const organization = await prisma.organization.upsert({
+    where: { slug: definition.slug },
+    update: {},
+    create: {
+      name: definition.name,
+      slug: definition.slug,
+    },
+  });
+
+  console.log(`Organization ready: ${organization.name}`);
+}
+
+// Hash the shared development-only test password once.
+const passwordHash = await argon2.hash(testPassword);
+
+const newOrganizations = await prisma.organization.findMany({
+  where: {
+    slug: { in: testOrganizations.map((org) => org.slug) },
+  },
+  select: {
+    id: true,
+    name: true,
+    slug: true,
+  },
+});
+
+// 2. Create four departments and four users per organization.
+for (const organization of newOrganizations) {
+  const departments: { id: string; name: string }[] = [];
+
+  for (const definition of departmentDefinitions) {
+    const department = await prisma.department.upsert({
+      where: {
+        organizationId_code: {
+          organizationId: organization.id,
+          code: definition.code,
+        },
+      },
+      update: {
+        name: definition.name,
+        isActive: true,
+      },
+      create: {
+        organizationId: organization.id,
+        name: definition.name,
+        code: definition.code,
+        isActive: true,
+      },
+    });
+
+    departments.push(department);
+  }
+
+  const prefix =
+    organization.slug === "acme-corporation"
+      ? "a"
+      : organization.slug === "globex-corporation"
+        ? "b"
+        : organization.slug === "initech-corporation"
+          ? "c"
+          : "d";
+
+  for (let i = 0; i < 4; i++) {
+    const email = `${prefix}.user${i + 1}@test.com`;
+
+    // Create or reuse the user. Email is globally unique.
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: {
+        status: "ACTIVE",
+        passwordHash,
+      },
+      create: {
+        email,
+        passwordHash,
+        status: "ACTIVE",
+      },
+    });
+
+    // Give the user an active membership in this organization.
+    const membership = await prisma.organizationMembership.upsert({
+      where: {
+        organizationId_userId: {
+          organizationId: organization.id,
+          userId: user.id,
+        },
+      },
+      update: {
+        status: "ACTIVE",
+      },
+      create: {
+        organizationId: organization.id,
+        userId: user.id,
+        status: "ACTIVE",
+      },
+    });
+
+    // Assign each user to one department.
+    const department = departments[i];
+
+    await prisma.membershipDepartment.upsert({
+      where: {
+        membershipId_departmentId: {
+          membershipId: membership.id,
+          departmentId: department.id,
+        },
+      },
+      update: {},
+      create: {
+        membershipId: membership.id,
+        departmentId: department.id,
+        organizationId: organization.id,
+      },
+    });
+
+    console.log(
+      `User ready: ${email} -> ${organization.name} -> ${department.name}`,
+    );
+  }
+}
   // 1. Create the global permission catalog.
   const permissionByKey = new Map<string, string>();
 
@@ -190,6 +329,64 @@ async function main() {
 
   console.log(`Seeded ${permissionDefinitions.length} permissions.`);
   console.log(`Processed ${organizations.length} organizations.`);
+
+  // 4. Assign organization_admin to the first user
+// and employee to the remaining three users.
+for (const organization of organizations) {
+  const prefix =
+    organization.name === "Acme Corporation"
+      ? "a"
+      : organization.name === "Globex Corporation"
+        ? "b"
+        : organization.name === "Initech Corporation"
+          ? "c"
+          : "d";
+
+  for (let i = 0; i < 4; i++) {
+    const email = `${prefix}.user${i + 1}@test.com`;
+
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { email },
+    });
+
+    const membership = await prisma.organizationMembership.findUniqueOrThrow({
+      where: {
+        organizationId_userId: {
+          organizationId: organization.id,
+          userId: user.id,
+        },
+      },
+    });
+
+    const roleKey = i === 0 ? "organization_admin" : "employee";
+
+    const role = await prisma.role.findUniqueOrThrow({
+      where: {
+        organizationId_key: {
+          organizationId: organization.id,
+          key: roleKey,
+        },
+      },
+    });
+
+    await prisma.membershipRole.upsert({
+      where: {
+        membershipId_roleId: {
+          membershipId: membership.id,
+          roleId: role.id,
+        },
+      },
+      update: {},
+      create: {
+        membershipId: membership.id,
+        roleId: role.id,
+        organizationId: organization.id,
+      },
+    });
+  }
+
+  console.log(`Role assignments ready: ${organization.name}`);
+}
 }
 
 main()
