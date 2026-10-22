@@ -31,6 +31,7 @@ model Organization {
   roles       Role[]
   invitations Invitation[]
   auditLogs   AuditLog[]
+  subscriptions Subscription[]
 
   @@map("organizations")
 }
@@ -40,6 +41,7 @@ model User {
   email           String     @unique
   passwordHash    String?    @map("password_hash")
   status          UserStatus @default(INVITED)
+  isPlatformSuperAdmin Boolean @default(false) @map("is_platform_super_admin")
   emailVerifiedAt DateTime?  @map("email_verified_at")
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
@@ -212,4 +214,73 @@ model AuditLog {
   @@index([organizationId, entityType, entityId])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+enum SubscriptionStatus {
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+}
+
+model ErpModule {
+  id                   String   @id @default(uuid())
+  key                  String   @unique
+  name                 String
+  description          String?
+  isActive             Boolean  @default(true) @map("is_active")
+  baseMonthlyPrice     Decimal  @default(0) @map("base_monthly_price") @db.Decimal(12, 2)
+  perUserMonthlyPrice  Decimal  @default(0) @map("per_user_monthly_price") @db.Decimal(12, 2)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  subscriptionModules SubscriptionModule[]
+
+  @@map("erp_modules")
+}
+
+model Subscription {
+  id                    String             @id @default(uuid())
+  organizationId        String             @map("organization_id")
+  status                SubscriptionStatus @default(PENDING)
+  billingInterval       BillingInterval    @default(MONTHLY) @map("billing_interval")
+  licensedUserLimit     Int                @map("licensed_user_limit")
+  currency              String             @default("INR")
+  perUserMonthlyPrice   Decimal            @default(0) @map("per_user_monthly_price") @db.Decimal(12, 2)
+  startsAt              DateTime?          @map("starts_at")
+  currentPeriodStart    DateTime?          @map("current_period_start")
+  currentPeriodEnd      DateTime?          @map("current_period_end")
+  cancelledAt           DateTime?          @map("cancelled_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  modules      SubscriptionModule[]
+
+  @@index([organizationId, status])
+  @@index([currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+model SubscriptionModule {
+  id                    String   @id @default(uuid())
+  subscriptionId        String   @map("subscription_id")
+  moduleId              String   @map("module_id")
+  baseMonthlyPrice      Decimal  @map("base_monthly_price") @db.Decimal(12, 2)
+  perUserMonthlyPrice   Decimal  @default(0) @map("per_user_monthly_price") @db.Decimal(12, 2)
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  module       ErpModule    @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+
+  @@unique([subscriptionId, moduleId])
+  @@index([moduleId])
+  @@map("subscription_modules")
 }

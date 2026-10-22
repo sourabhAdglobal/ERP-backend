@@ -7,7 +7,7 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { JwtStrategy } from "./strategies/jwt.strategy";
-
+import { PlatformSuperAdminGuard } from "./guards/platform-super-admin.guard";
 const jwtSecret = process.env.JWT_ACCESS_SECRET;
 
 if (!jwtSecret) {
@@ -24,7 +24,7 @@ if (!jwtSecret) {
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [JwtAuthGuard, JwtModule],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard,PlatformSuperAdminGuard],
+  exports: [JwtAuthGuard, JwtModule,PlatformSuperAdminGuard],
 })
 export class AuthModule {}
